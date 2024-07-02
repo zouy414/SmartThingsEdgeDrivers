@@ -20,7 +20,6 @@ local device_lib = require "st.device"
 local utils = require "st.utils"
 local log = require "log"
 
-local lightingEffect = capabilities["amberwonder26407.lightingEffect"]
 local YEELIGHT_MANUFACTURER_ID = 0x1312
 local PRIVATE_CLUSTER_ENDPOINT_ID = 0x02
 local PRIVATE_CLUSTER_ID = 0x1312FC05
@@ -41,6 +40,7 @@ local LIGHTING_EFFECT_ID = {
   ["tide"]          = 0x30,
   ["buildingBlock"] = 0x31
 }
+local LIGHTING_EFFECT_NONE = "none"
 local CURRENT_LIGHTING_EFFECT_KEY = "effectID"
 
 local MOST_RECENT_TEMP = "mostRecentTemp"
@@ -64,29 +64,36 @@ local function device_init(driver, device)
   device:send(
     cluster_base.subscribe(device, PRIVATE_CLUSTER_ENDPOINT_ID, PRIVATE_CLUSTER_ID, PRIVATE_LIGHTING_EFFECT_ATTR_ID, nil)
   )
+
+  local supportedModes = {}
+  for key, value in pairs(LIGHTING_EFFECT_ID) do
+    table.insert(supportedModes, key)
+  end
+
+  device:emit_event(capabilities.mode.supportedModes(supportedModes), { visibility = { displayed = false } })
 end
 
 local function device_added(driver, device)
-  device:emit_event(lightingEffect.state("custom"))
+  device:emit_event(capabilities.mode.mode(LIGHTING_EFFECT_NONE))
 end
 
 local function lighting_effect_attr_handler(driver, device, ib, zb_rx)
   for key, value in pairs(LIGHTING_EFFECT_ID) do
     if value == ib.data.value then
-      device:emit_event(lightingEffect.state(key))
+      device:emit_event(capabilities.mode.mode(key))
       device:set_field(CURRENT_LIGHTING_EFFECT_KEY, key, { persist = true })
       return
     end
   end
   log.warn("can not find matched light effect: " .. ib.data.value)
-  device:emit_event(lightingEffect.state("custom"))
+  device:emit_event(capabilities.mode.mode(LIGHTING_EFFECT_NONE))
 end
 
 local function hue_attr_handler(driver, device, ib, response)
   if ib.data.value ~= nil then
     local hue = math.floor((ib.data.value / 0xFE * 100) + 0.5)
     device:emit_event_for_endpoint(ib.endpoint_id, capabilities.colorControl.hue(hue))
-    device:emit_event(lightingEffect.state("custom"))
+    device:emit_event(capabilities.mode.mode(LIGHTING_EFFECT_NONE))
   end
 end
 
@@ -94,7 +101,7 @@ local function sat_attr_handler(driver, device, ib, response)
   if ib.data.value ~= nil then
     local sat = math.floor((ib.data.value / 0xFE * 100) + 0.5)
     device:emit_event_for_endpoint(ib.endpoint_id, capabilities.colorControl.saturation(sat))
-    device:emit_event(lightingEffect.state("custom"))
+    device:emit_event(capabilities.mode.mode(LIGHTING_EFFECT_NONE))
   end
 end
 
@@ -118,12 +125,12 @@ local function temp_attr_handler(driver, device, ib, response)
       temp = most_recent_temp
     end
     device:emit_event_for_endpoint(ib.endpoint_id, capabilities.colorTemperature.colorTemperature(temp))
-    device:emit_event(lightingEffect.state("custom"))
+    device:emit_event(capabilities.mode.mode(LIGHTING_EFFECT_NONE))
   end
 end
 
-local function lighting_effect_cap_handler(driver, device, cmd)
-  local effectId = data_types.validate_or_build_type(LIGHTING_EFFECT_ID[cmd.args.stateControl], data_types.Uint64, "effectId")
+local function mode_cap_handler(driver, device, cmd)
+  local effectId = data_types.validate_or_build_type(LIGHTING_EFFECT_ID[cmd.args.mode], data_types.Uint64, "effectId")
   effectId["field_id"] = 1
 
   device:send(
@@ -140,8 +147,8 @@ local function lighting_effect_cap_handler(driver, device, cmd)
     )
   )
 
-  if device:get_field(CURRENT_LIGHTING_EFFECT_KEY) == cmd.args.stateControl then
-    device:emit_event(lightingEffect.state(cmd.args.stateControl))
+  if device:get_field(CURRENT_LIGHTING_EFFECT_KEY) == cmd.args.mode then
+    device:emit_event(capabilities.mode.state(cmd.args.mode))
   end
 end
 
@@ -164,8 +171,8 @@ local yeelight_smart_lamp = {
     }
   },
   capability_handlers = {
-    [lightingEffect.ID] = {
-      [lightingEffect.commands.stateControl.NAME] = lighting_effect_cap_handler
+    [capabilities.mode.ID] = {
+      [capabilities.mode.commands.setMode.NAME] = mode_cap_handler
     }
   },
   can_handle = is_yeelight_products
